@@ -8,10 +8,10 @@ from selenium.webdriver.common.keys import Keys
 from telegram import Bot
 
 # --- CONFIGURACOES ---
-TELEGRAM_TOKEN = "7149689538:AAGmiN-c6z-AdJo0DAzIh9Fu2N84fi1DAo"
-CHAT_ID = "@JardelCampos_bot"
-USERNAME = "975167377"
-PASSWORD = "Jardel12"
+TELEGRAM_TOKEN = "8730616898:AAFo4A7ooNt1mjmAduemWWDLez38uumltzo"
+CHAT_ID = "@Lukevan_bot"
+USERNAME = "925959236"
+PASSWORD = "Senhas.925"
 
 # --- SETUP TELEGRAM ---
 bot = Bot(token=TELEGRAM_TOKEN)
