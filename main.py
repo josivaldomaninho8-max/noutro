@@ -15,7 +15,7 @@ import telegram
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', "8730616898:AAFo4A7ooNt1mjmAduemWWDLez38uumltzo")
 CHAT_ID = os.environ.get('CHAT_ID', "@Lukevan_bot")
 USERNAME = os.environ.get('ELEPHANT_USERNAME', "925959236")
-PASSWORD = os.environ.get('ELEPHANT_PASSWORD', "Senhas.925")
+PASSWORD = os.environ.get('ELEPHANT_PASSWORD', "Senhas.50")
 
 # --- CONFIGURAÇÃO DE LOG ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
