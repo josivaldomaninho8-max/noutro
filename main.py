@@ -11,11 +11,11 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import telegram
 
-# --- CONFIGURAÇÕES DE SEGURANÇA ---
+# --- CONFIGURAÇÕES DE SEGURANÇA (USANDO VARIÁVEIS DE AMBIENTE) ---
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', "8730616898:AAFo4A7ooNt1mjmAduemWWDLez38uumltzo")
 CHAT_ID = os.environ.get('CHAT_ID', "@Lukevan_bot")
 USERNAME = os.environ.get('ELEPHANT_USERNAME', "925959236")
-PASSWORD = os.environ.get('ELEPHANT_PASSWORD', "Senhas.50")
+PASSWORD = os.environ.get('ELEPHANT_PASSWORD', "Senhas.50")  # <-- Senha corrigida
 
 # --- CONFIGURAÇÃO DE LOG ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -23,8 +23,9 @@ logger = logging.getLogger(__name__)
 
 # --- SETUP TELEGRAM (VERSÃO SÍNCRONA) ---
 def enviar_mensagem_telegram(mensagem):
-    """Função síncrona para enviar mensagem ao Telegram"""
+    """Envia mensagem para o Telegram de forma síncrona"""
     try:
+        # Usamos a versão síncrona do Bot (sem async)
         bot = telegram.Bot(token=TELEGRAM_TOKEN)
         bot.send_message(chat_id=CHAT_ID, text=mensagem, parse_mode='Markdown')
         return True
@@ -43,7 +44,6 @@ def iniciar_driver():
     options.add_argument('--disable-blink-features=AutomationControlled')
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
     
-    # Desabilitar notificações e popups
     prefs = {
         "profile.default_content_setting_values.notifications": 2,
         "credentials_enable_service": False,
@@ -60,14 +60,14 @@ def iniciar_driver():
         logger.error(f"Erro ao iniciar driver: {e}")
         raise
 
-# --- LOGIN NA ELEPHANTEBET (CORRIGIDO) ---
+# --- LOGIN NA ELEPHANTEBET (COM WAITS EXPLÍCITOS) ---
 def login_elephantebet(driver):
     try:
         logger.info("Acessando ElephantBet...")
         driver.get("https://elephantbet.co.ao")
-        time.sleep(8)  # Aumentar tempo de carregamento
+        time.sleep(8)
         
-        # Tentar diferentes formas de encontrar o botão de login
+        # Tentar clicar no botão de login usando múltiplos seletores
         login_encontrado = False
         seletores_login = [
             (By.CLASS_NAME, "login"),
@@ -93,29 +93,14 @@ def login_elephantebet(driver):
                 continue
         
         if not login_encontrado:
-            # Tentar clicar no botão de perfil/avatar se existir
-            try:
-                avatar = driver.find_element(By.CSS_SELECTOR, "[class*='avatar'], [class*='profile']")
-                avatar.click()
-                time.sleep(2)
-                # Procurar opção de login no dropdown
-                login_dropdown = driver.find_element(By.XPATH, "//a[contains(text(), 'Login') or contains(text(), 'Entrar')]")
-                login_dropdown.click()
-                login_encontrado = True
-                logger.info("Login via dropdown")
-            except:
-                pass
-        
-        if not login_encontrado:
-            # Último recurso: tentar acessar diretamente a página de login
+            # Tentar acesso direto à página de login
             logger.info("Tentando acesso direto à página de login...")
             driver.get("https://elephantbet.co.ao/login")
-            time.sleep(3)
+            time.sleep(5)
         
-        # Preencher credenciais
-        time.sleep(3)
+        # Preencher credenciais com waits
         try:
-            username_field = WebDriverWait(driver, 10).until(
+            username_field = WebDriverWait(driver, 15).until(
                 EC.presence_of_element_located((By.NAME, "username"))
             )
             username_field.clear()
@@ -125,7 +110,7 @@ def login_elephantebet(driver):
             password_field.clear()
             password_field.send_keys(PASSWORD)
             
-            # Tentar diferentes formas de submeter
+            # Submeter o formulário
             try:
                 submit_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit'], input[type='submit']")
                 submit_btn.click()
@@ -134,44 +119,41 @@ def login_elephantebet(driver):
             
             time.sleep(5)
             
-            # Verificar se login foi bem sucedido
+            # Verificar se o login foi bem-sucedido (redirecionamento)
             if "login" not in driver.current_url.lower():
                 logger.info("Login realizado com sucesso!")
                 return True
             else:
-                logger.warning("Possível falha no login, continuando...")
+                logger.warning("Possível falha no login, mas continuando...")
                 return True
                 
         except Exception as e:
             logger.error(f"Erro ao preencher credenciais: {e}")
+            # Salvar screenshot para debug
+            try:
+                driver.save_screenshot("login_error.png")
+                logger.info("Screenshot salvo como login_error.png")
+            except:
+                pass
             return False
             
     except Exception as e:
         logger.error(f"Erro no login: {e}")
-        # Salvar screenshot para debug
-        try:
-            driver.save_screenshot("login_error.png")
-            logger.info("Screenshot salvo como login_error.png")
-        except:
-            pass
         return False
 
-# --- COLETAR RESULTADOS DO BACBO (MELHORADO) ---
+# --- COLETAR RESULTADOS DO BACBO ---
 def coletar_resultados(driver):
     try:
         logger.info("Coletando resultados do Bac Bo...")
         driver.get("https://elephantbet.co.ao/casino")
         time.sleep(10)
-        
-        # Scroll para carregar conteúdo
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
         time.sleep(3)
         
         resultados = []
-        # Múltiplos seletores
         seletores = [
             ".history-result-circle",
-            ".result-circle", 
+            ".result-circle",
             ".history-item .result",
             "[class*='history'] [class*='circle']",
             ".game-result",
@@ -200,15 +182,13 @@ def coletar_resultados(driver):
             except:
                 continue
         
-        # Se não encontrou resultados, tentar extrair do HTML
+        # Fallback: extrair do HTML
         if not resultados:
             logger.info("Tentando extrair do HTML...")
-            html = driver.page_source
-            # Procurar padrões de resultados
             import re
             padroes = [r'[BPT](?=\s|$)', r'BANCO|JOGADOR|EMPATE']
             for padrao in padroes:
-                matches = re.findall(padrao, html)
+                matches = re.findall(padrao, driver.page_source)
                 for match in matches[:20]:
                     if match in ["B", "P", "T"]:
                         resultados.append(match)
@@ -300,7 +280,7 @@ def main():
     # Executar imediatamente
     enviar_sinal()
     
-    # Agendar
+    # Agendar a cada 2 minutos
     schedule.every(2).minutes.do(enviar_sinal)
     
     while True:
