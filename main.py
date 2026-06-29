@@ -6,9 +6,12 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from telegram import Bot
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+import telegram
 
-# --- CONFIGURAÇÕES DE SEGURANÇA (USANDO VARIÁVEIS DE AMBIENTE) ---
+# --- CONFIGURAÇÕES DE SEGURANÇA ---
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', "8730616898:AAFo4A7ooNt1mjmAduemWWDLez38uumltzo")
 CHAT_ID = os.environ.get('CHAT_ID', "@Lukevan_bot")
 USERNAME = os.environ.get('ELEPHANT_USERNAME', "925959236")
@@ -18,21 +21,37 @@ PASSWORD = os.environ.get('ELEPHANT_PASSWORD', "Senhas.925")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- SETUP TELEGRAM ---
-bot = Bot(token=TELEGRAM_TOKEN)
+# --- SETUP TELEGRAM (VERSÃO SÍNCRONA) ---
+def enviar_mensagem_telegram(mensagem):
+    """Função síncrona para enviar mensagem ao Telegram"""
+    try:
+        bot = telegram.Bot(token=TELEGRAM_TOKEN)
+        bot.send_message(chat_id=CHAT_ID, text=mensagem, parse_mode='Markdown')
+        return True
+    except Exception as e:
+        logger.error(f"Erro ao enviar mensagem: {e}")
+        return False
 
 # --- SETUP SELENIUM PARA RENDER ---
 def iniciar_driver():
     options = Options()
-    options.add_argument('--headless')  # Modo sem interface gráfica
+    options.add_argument('--headless')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--disable-gpu')
     options.add_argument('--window-size=1920x1080')
-    
-    # Configurações específicas para o Render
     options.add_argument('--disable-blink-features=AutomationControlled')
-    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+    
+    # Desabilitar notificações e popups
+    prefs = {
+        "profile.default_content_setting_values.notifications": 2,
+        "credentials_enable_service": False,
+        "profile.password_manager_enabled": False
+    }
+    options.add_experimental_option("prefs", prefs)
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
     
     try:
         driver = webdriver.Chrome(options=options)
@@ -41,59 +60,124 @@ def iniciar_driver():
         logger.error(f"Erro ao iniciar driver: {e}")
         raise
 
-# --- LOGIN NA ELEPHANTEBET (COM TRATAMENTO DE ERROS) ---
+# --- LOGIN NA ELEPHANTEBET (CORRIGIDO) ---
 def login_elephantebet(driver):
     try:
         logger.info("Acessando ElephantBet...")
         driver.get("https://elephantbet.co.ao")
-        time.sleep(5)
+        time.sleep(8)  # Aumentar tempo de carregamento
         
-        # Tentar encontrar o botão de login
-        try:
-            login_btn = driver.find_element(By.CLASS_NAME, "login")
-            login_btn.click()
-            logger.info("Botão de login clicado")
-        except:
-            # Tentar outro seletor se o primeiro falhar
-            login_btn = driver.find_element(By.CSS_SELECTOR, "a[href*='login']")
-            login_btn.click()
+        # Tentar diferentes formas de encontrar o botão de login
+        login_encontrado = False
+        seletores_login = [
+            (By.CLASS_NAME, "login"),
+            (By.CSS_SELECTOR, "a[href*='login']"),
+            (By.CSS_SELECTOR, "button[class*='login']"),
+            (By.CSS_SELECTOR, "a[class*='login']"),
+            (By.XPATH, "//a[contains(text(), 'Login')]"),
+            (By.XPATH, "//button[contains(text(), 'Login')]"),
+            (By.CSS_SELECTOR, ".user-login"),
+            (By.CSS_SELECTOR, "[class*='login']")
+        ]
         
-        time.sleep(3)
+        for seletor in seletores_login:
+            try:
+                login_btn = WebDriverWait(driver, 5).until(
+                    EC.element_to_be_clickable(seletor)
+                )
+                login_btn.click()
+                login_encontrado = True
+                logger.info(f"Login clicado com seletor: {seletor}")
+                break
+            except:
+                continue
+        
+        if not login_encontrado:
+            # Tentar clicar no botão de perfil/avatar se existir
+            try:
+                avatar = driver.find_element(By.CSS_SELECTOR, "[class*='avatar'], [class*='profile']")
+                avatar.click()
+                time.sleep(2)
+                # Procurar opção de login no dropdown
+                login_dropdown = driver.find_element(By.XPATH, "//a[contains(text(), 'Login') or contains(text(), 'Entrar')]")
+                login_dropdown.click()
+                login_encontrado = True
+                logger.info("Login via dropdown")
+            except:
+                pass
+        
+        if not login_encontrado:
+            # Último recurso: tentar acessar diretamente a página de login
+            logger.info("Tentando acesso direto à página de login...")
+            driver.get("https://elephantbet.co.ao/login")
+            time.sleep(3)
         
         # Preencher credenciais
-        username_field = driver.find_element(By.NAME, "username")
-        username_field.send_keys(USERNAME)
-        
-        password_field = driver.find_element(By.NAME, "password")
-        password_field.send_keys(PASSWORD)
-        password_field.send_keys(Keys.ENTER)
-        
-        time.sleep(5)
-        logger.info("Login realizado com sucesso!")
-        return True
+        time.sleep(3)
+        try:
+            username_field = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.NAME, "username"))
+            )
+            username_field.clear()
+            username_field.send_keys(USERNAME)
+            
+            password_field = driver.find_element(By.NAME, "password")
+            password_field.clear()
+            password_field.send_keys(PASSWORD)
+            
+            # Tentar diferentes formas de submeter
+            try:
+                submit_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit'], input[type='submit']")
+                submit_btn.click()
+            except:
+                password_field.send_keys(Keys.ENTER)
+            
+            time.sleep(5)
+            
+            # Verificar se login foi bem sucedido
+            if "login" not in driver.current_url.lower():
+                logger.info("Login realizado com sucesso!")
+                return True
+            else:
+                logger.warning("Possível falha no login, continuando...")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Erro ao preencher credenciais: {e}")
+            return False
+            
     except Exception as e:
         logger.error(f"Erro no login: {e}")
         # Salvar screenshot para debug
         try:
             driver.save_screenshot("login_error.png")
+            logger.info("Screenshot salvo como login_error.png")
         except:
             pass
         return False
 
-# --- COLETAR RESULTADOS DO BACBO (COM MELHORIA) ---
+# --- COLETAR RESULTADOS DO BACBO (MELHORADO) ---
 def coletar_resultados(driver):
     try:
         logger.info("Coletando resultados do Bac Bo...")
         driver.get("https://elephantbet.co.ao/casino")
-        time.sleep(10)  # Tempo para carregar completamente
+        time.sleep(10)
+        
+        # Scroll para carregar conteúdo
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
+        time.sleep(3)
         
         resultados = []
-        # Múltiplos seletores para tentar capturar os resultados
+        # Múltiplos seletores
         seletores = [
             ".history-result-circle",
-            ".result-circle",
+            ".result-circle", 
             ".history-item .result",
-            "[class*='history'] [class*='circle']"
+            "[class*='history'] [class*='circle']",
+            ".game-result",
+            "[class*='result'] [class*='history']",
+            "div[class*='result'] span",
+            ".history-list .item"
         ]
         
         for seletor in seletores:
@@ -102,17 +186,40 @@ def coletar_resultados(driver):
                 if elementos:
                     for e in elementos[:20]:
                         texto = e.text.strip().upper()
-                        # Normalizar texto
-                        if "BANCO" in texto or "B" in texto:
+                        if texto in ["B", "P", "T"]:
+                            resultados.append(texto)
+                        elif "BANCO" in texto:
                             resultados.append("B")
-                        elif "JOGADOR" in texto or "P" in texto or "PLAYER" in texto:
+                        elif "JOGADOR" in texto or "PLAYER" in texto:
                             resultados.append("P")
-                        elif "EMPATE" in texto or "T" in texto or "TIE" in texto:
+                        elif "EMPATE" in texto or "TIE" in texto:
                             resultados.append("T")
                     if resultados:
+                        logger.info(f"Resultados encontrados com seletor: {seletor}")
                         break
             except:
                 continue
+        
+        # Se não encontrou resultados, tentar extrair do HTML
+        if not resultados:
+            logger.info("Tentando extrair do HTML...")
+            html = driver.page_source
+            # Procurar padrões de resultados
+            import re
+            padroes = [r'[BPT](?=\s|$)', r'BANCO|JOGADOR|EMPATE']
+            for padrao in padroes:
+                matches = re.findall(padrao, html)
+                for match in matches[:20]:
+                    if match in ["B", "P", "T"]:
+                        resultados.append(match)
+                    elif "BANCO" in match:
+                        resultados.append("B")
+                    elif "JOGADOR" in match:
+                        resultados.append("P")
+                    elif "EMPATE" in match:
+                        resultados.append("T")
+                if resultados:
+                    break
         
         logger.info(f"Resultados coletados: {resultados[:10]}")
         return resultados
@@ -120,25 +227,25 @@ def coletar_resultados(driver):
         logger.error(f"Erro ao coletar resultados: {e}")
         return []
 
-# --- ANALISAR TENDÊNCIA (MELHORADA) ---
+# --- ANALISAR TENDÊNCIA ---
 def prever_sinal(resultados):
     if not resultados or len(resultados) < 3:
         return "📊 Aguardando mais dados..."
     
-    # Pegar os últimos 10 resultados
     ultimos = resultados[:10]
     count = {"B": 0, "P": 0, "T": 0}
     for r in ultimos:
         if r in count:
             count[r] += 1
     
-    # Análise mais completa
     total = len(ultimos)
-    perc_b = (count["B"] / total) * 100 if total > 0 else 0
-    perc_p = (count["P"] / total) * 100 if total > 0 else 0
-    perc_t = (count["T"] / total) * 100 if total > 0 else 0
+    if total == 0:
+        return "📊 Sem dados suficientes"
     
-    # Lógica de decisão
+    perc_b = (count["B"] / total) * 100
+    perc_p = (count["P"] / total) * 100
+    perc_t = (count["T"] / total) * 100
+    
     if perc_b >= 50:
         return f"🔵 BANCO - ({perc_b:.1f}% chance)"
     elif perc_p >= 50:
@@ -146,12 +253,11 @@ def prever_sinal(resultados):
     elif perc_t >= 40:
         return f"🟡 EMPATE - ({perc_t:.1f}% chance)"
     else:
-        # Se nenhuma tendência clara, recomendar o que está mais quente
         maior = max(count, key=count.get)
         nomes = {"B": "BANCO", "P": "JOGADOR", "T": "EMPATE"}
         return f"📈 {nomes[maior]} - Tendência detectada"
 
-# --- TAREFA PRINCIPAL COM STATUS ---
+# --- TAREFA PRINCIPAL ---
 def enviar_sinal():
     logger.info("Iniciando coleta de sinais...")
     driver = None
@@ -161,7 +267,6 @@ def enviar_sinal():
             resultados = coletar_resultados(driver)
             sinal = prever_sinal(resultados)
             
-            # Formatar mensagem
             mensagem = f"""
 🎯 *SINAL BAC BO - ELEPHANTBET*
 
@@ -172,17 +277,14 @@ def enviar_sinal():
 ⏰ Atualizado: {time.strftime('%H:%M:%S')}
             """
             
-            bot.send_message(chat_id=CHAT_ID, text=mensagem, parse_mode='Markdown')
-            logger.info(f"Sinal enviado com sucesso: {sinal}")
+            enviar_mensagem_telegram(mensagem)
+            logger.info(f"Sinal enviado: {sinal}")
         else:
-            bot.send_message(chat_id=CHAT_ID, text="⚠️ Falha no login. Verificando...")
+            enviar_mensagem_telegram("⚠️ Falha no login. Verificando...")
             logger.error("Falha no login")
     except Exception as e:
         logger.error(f"Erro na execução: {e}")
-        try:
-            bot.send_message(chat_id=CHAT_ID, text=f"❌ Erro: {str(e)[:100]}")
-        except:
-            pass
+        enviar_mensagem_telegram(f"❌ Erro: {str(e)[:100]}")
     finally:
         if driver:
             driver.quit()
@@ -193,19 +295,14 @@ def main():
     logger.info("🤖 Bot de Sinais Bac Bo iniciado!")
     logger.info(f"📱 Canal: {CHAT_ID}")
     
-    # Enviar mensagem de inicialização
-    try:
-        bot.send_message(chat_id=CHAT_ID, text="🚀 Bot de Sinais Bac Bo está ONLINE!")
-    except:
-        logger.warning("Não foi possível enviar mensagem de inicialização")
+    enviar_mensagem_telegram("🚀 Bot de Sinais Bac Bo está ONLINE!")
     
-    # Agendar execução a cada 2 minutos
-    schedule.every(2).minutes.do(enviar_sinal)
-    
-    # Também executar imediatamente na inicialização
+    # Executar imediatamente
     enviar_sinal()
     
-    # Loop principal
+    # Agendar
+    schedule.every(2).minutes.do(enviar_sinal)
+    
     while True:
         schedule.run_pending()
         time.sleep(1)
