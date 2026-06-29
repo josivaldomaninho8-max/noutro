@@ -2,6 +2,7 @@ import time
 import logging
 import os
 import schedule
+import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -9,98 +10,93 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
-import telegram
 
-# --- CONFIGURAÇÕES DE SEGURANÇA (USANDO VARIÁVEIS DE AMBIENTE) ---
+# --- CONFIGURAÇÕES ---
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', "8730616898:AAFo4A7ooNt1mjmAduemWWDLez38uumltzo")
 CHAT_ID = os.environ.get('CHAT_ID', "@Lukevan_bot")
 USERNAME = os.environ.get('ELEPHANT_USERNAME', "925959236")
-PASSWORD = os.environ.get('ELEPHANT_PASSWORD', "Senhas.50")  # <-- Senha corrigida
+PASSWORD = os.environ.get('ELEPHANT_PASSWORD', "Senhas.50")
 
-# --- CONFIGURAÇÃO DE LOG ---
+# --- LOGGING ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- SETUP TELEGRAM (VERSÃO SÍNCRONA) ---
+# --- ENVIO DE MENSAGEM VIA TELEGRAM (USANDO REQUESTS) ---
 def enviar_mensagem_telegram(mensagem):
-    """Envia mensagem para o Telegram de forma síncrona"""
+    """Envia mensagem via API do Telegram usando requests"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        'chat_id': CHAT_ID,
+        'text': mensagem,
+        'parse_mode': 'Markdown'
+    }
     try:
-        # Usamos a versão síncrona do Bot (sem async)
-        bot = telegram.Bot(token=TELEGRAM_TOKEN)
-        bot.send_message(chat_id=CHAT_ID, text=mensagem, parse_mode='Markdown')
-        return True
+        resp = requests.post(url, json=payload, timeout=10)
+        if resp.status_code == 200:
+            logger.info("Mensagem enviada com sucesso")
+            return True
+        else:
+            logger.error(f"Erro ao enviar: {resp.status_code} - {resp.text}")
+            return False
     except Exception as e:
-        logger.error(f"Erro ao enviar mensagem: {e}")
+        logger.error(f"Erro na requisição: {e}")
         return False
 
-# --- SETUP SELENIUM PARA RENDER ---
+# --- DRIVER ---
 def iniciar_driver():
     options = Options()
     options.add_argument('--headless')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--disable-gpu')
-    options.add_argument('--window-size=1920x1080')
+    options.add_argument('--window-size=1920,1080')
     options.add_argument('--disable-blink-features=AutomationControlled')
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-    
-    prefs = {
-        "profile.default_content_setting_values.notifications": 2,
-        "credentials_enable_service": False,
-        "profile.password_manager_enabled": False
-    }
-    options.add_experimental_option("prefs", prefs)
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
+    # Desabilitar imagens para carregar mais rápido (opcional)
+    prefs = {"profile.managed_default_content_settings.images": 2}
+    options.add_experimental_option("prefs", prefs)
     
-    try:
-        driver = webdriver.Chrome(options=options)
-        return driver
-    except Exception as e:
-        logger.error(f"Erro ao iniciar driver: {e}")
-        raise
+    driver = webdriver.Chrome(options=options)
+    return driver
 
-# --- LOGIN NA ELEPHANTEBET (COM WAITS EXPLÍCITOS) ---
+# --- LOGIN MELHORADO ---
 def login_elephantebet(driver):
     try:
         logger.info("Acessando ElephantBet...")
         driver.get("https://elephantbet.co.ao")
         time.sleep(8)
         
-        # Tentar clicar no botão de login usando múltiplos seletores
-        login_encontrado = False
-        seletores_login = [
-            (By.CLASS_NAME, "login"),
-            (By.CSS_SELECTOR, "a[href*='login']"),
-            (By.CSS_SELECTOR, "button[class*='login']"),
-            (By.CSS_SELECTOR, "a[class*='login']"),
-            (By.XPATH, "//a[contains(text(), 'Login')]"),
-            (By.XPATH, "//button[contains(text(), 'Login')]"),
-            (By.CSS_SELECTOR, ".user-login"),
-            (By.CSS_SELECTOR, "[class*='login']")
+        # Primeiro tenta clicar no botão login
+        login_btn = None
+        selectors = [
+            "a.login",
+            "button.login",
+            "a[href*='login']",
+            "button[class*='login']",
+            "a:contains('Login')",
+            "button:contains('Login')"
         ]
-        
-        for seletor in seletores_login:
+        for selector in selectors:
             try:
-                login_btn = WebDriverWait(driver, 5).until(
-                    EC.element_to_be_clickable(seletor)
-                )
-                login_btn.click()
-                login_encontrado = True
-                logger.info(f"Login clicado com seletor: {seletor}")
+                login_btn = driver.find_element(By.CSS_SELECTOR, selector)
                 break
             except:
                 continue
-        
-        if not login_encontrado:
-            # Tentar acesso direto à página de login
-            logger.info("Tentando acesso direto à página de login...")
+        if login_btn:
+            login_btn.click()
+            logger.info("Botão de login clicado")
+            time.sleep(5)
+        else:
+            logger.info("Botão não encontrado, tentando direto na página de login")
             driver.get("https://elephantbet.co.ao/login")
             time.sleep(5)
         
-        # Preencher credenciais com waits
+        # Aguardar o formulário
         try:
-            username_field = WebDriverWait(driver, 15).until(
+            # Esperar pelo campo de usuário
+            username_field = WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located((By.NAME, "username"))
             )
             username_field.clear()
@@ -110,38 +106,32 @@ def login_elephantebet(driver):
             password_field.clear()
             password_field.send_keys(PASSWORD)
             
-            # Submeter o formulário
-            try:
-                submit_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit'], input[type='submit']")
-                submit_btn.click()
-            except:
-                password_field.send_keys(Keys.ENTER)
-            
+            # Tentar submeter
+            submit_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit'], input[type='submit']")
+            submit_btn.click()
             time.sleep(5)
             
-            # Verificar se o login foi bem-sucedido (redirecionamento)
+            # Verificar se o login foi bem sucedido (verificar se o URL mudou ou se aparece algum elemento de usuário logado)
             if "login" not in driver.current_url.lower():
-                logger.info("Login realizado com sucesso!")
+                logger.info("Login aparentemente bem-sucedido")
                 return True
             else:
-                logger.warning("Possível falha no login, mas continuando...")
-                return True
-                
+                # Tentar ver se há mensagem de erro
+                try:
+                    error_msg = driver.find_element(By.CLASS_NAME, "error").text
+                    logger.error(f"Mensagem de erro: {error_msg}")
+                except:
+                    pass
+                return False
         except Exception as e:
             logger.error(f"Erro ao preencher credenciais: {e}")
-            # Salvar screenshot para debug
-            try:
-                driver.save_screenshot("login_error.png")
-                logger.info("Screenshot salvo como login_error.png")
-            except:
-                pass
+            driver.save_screenshot("login_error.png")
             return False
-            
     except Exception as e:
         logger.error(f"Erro no login: {e}")
         return False
 
-# --- COLETAR RESULTADOS DO BACBO ---
+# --- COLETA DE RESULTADOS (como antes) ---
 def coletar_resultados(driver):
     try:
         logger.info("Coletando resultados do Bac Bo...")
@@ -182,24 +172,16 @@ def coletar_resultados(driver):
             except:
                 continue
         
-        # Fallback: extrair do HTML
+        # Fallback com regex
         if not resultados:
             logger.info("Tentando extrair do HTML...")
             import re
-            padroes = [r'[BPT](?=\s|$)', r'BANCO|JOGADOR|EMPATE']
-            for padrao in padroes:
-                matches = re.findall(padrao, driver.page_source)
-                for match in matches[:20]:
-                    if match in ["B", "P", "T"]:
-                        resultados.append(match)
-                    elif "BANCO" in match:
-                        resultados.append("B")
-                    elif "JOGADOR" in match:
-                        resultados.append("P")
-                    elif "EMPATE" in match:
-                        resultados.append("T")
-                if resultados:
-                    break
+            html = driver.page_source
+            # Procurar padrões como B, P, T em classes ou textos
+            matches = re.findall(r'[BPT](?=[\s<])', html)
+            for m in matches[:20]:
+                if m in ["B", "P", "T"]:
+                    resultados.append(m)
         
         logger.info(f"Resultados coletados: {resultados[:10]}")
         return resultados
@@ -207,7 +189,7 @@ def coletar_resultados(driver):
         logger.error(f"Erro ao coletar resultados: {e}")
         return []
 
-# --- ANALISAR TENDÊNCIA ---
+# --- ANÁLISE (igual) ---
 def prever_sinal(resultados):
     if not resultados or len(resultados) < 3:
         return "📊 Aguardando mais dados..."
@@ -270,17 +252,13 @@ def enviar_sinal():
             driver.quit()
             logger.info("Driver fechado")
 
-# --- INICIALIZAÇÃO ---
+# --- MAIN ---
 def main():
     logger.info("🤖 Bot de Sinais Bac Bo iniciado!")
     logger.info(f"📱 Canal: {CHAT_ID}")
     
     enviar_mensagem_telegram("🚀 Bot de Sinais Bac Bo está ONLINE!")
-    
-    # Executar imediatamente
     enviar_sinal()
-    
-    # Agendar a cada 2 minutos
     schedule.every(2).minutes.do(enviar_sinal)
     
     while True:
