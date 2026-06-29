@@ -8,7 +8,7 @@ echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /e
 apt-get update -y
 apt-get install -y google-chrome-stable
 
-# Instalar ChromeDriver compatível
+# ChromeDriver (usando undetected, mas ainda pode precisar)
 CHROME_VERSION=$(google-chrome --version | awk '{print $3}')
 CHROME_MAJOR=$(echo $CHROME_VERSION | cut -d. -f1)
 wget -O chromedriver.zip "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip"
